@@ -9,6 +9,7 @@ from rich.console import Console
 from quant.backtest import CostModel, run_backtest
 from quant.config import load_config
 from quant.data import DataStore, download as data_download, download_funding
+from quant.risk import build_overlays
 from quant.strategies import AUX_DATA_KEYS, get_strategy
 from quant.validation import (
     assess,
@@ -129,19 +130,24 @@ def backtest(
     aux = _load_aux_data(name, list(prices.columns), store, s, e)
     strategy = get_strategy(name, params, **aux)
 
+    risk_specs = cfg.get("risk", {}).get(name, [])
+    overlays = build_overlays(risk_specs)
+
     cm = CostModel(
         fee_pct=float(cfg["backtest"]["fee_pct"]),
         slippage_pct=float(cfg["backtest"]["slippage_pct"]),
     )
 
+    risk_label = f" + risk[{', '.join(o['type'] for o in risk_specs)}]" if risk_specs else ""
     console.print(
-        f"[bold]Backtest[/bold] strategy=[cyan]{name}[/cyan] "
+        f"[bold]Backtest[/bold] strategy=[cyan]{name}[/cyan]{risk_label} "
         f"symbols={list(prices.columns)} period={s}→{e}"
     )
 
     result = run_backtest(
         prices, strategy, cm,
         initial_capital=float(cfg["backtest"]["initial_capital"]),
+        overlays=overlays,
     )
     console.print(result.report_text())
 
@@ -233,6 +239,10 @@ def validate(
     base_params = cfg["strategies"][name]
     aux = _load_aux_data(name, list(prices.columns), store, s, e)
     strategy = get_strategy(name, base_params, **aux)
+
+    risk_specs = cfg.get("risk", {}).get(name, [])
+    overlays = build_overlays(risk_specs)
+
     cm = CostModel(
         fee_pct=float(cfg["backtest"]["fee_pct"]),
         slippage_pct=float(cfg["backtest"]["slippage_pct"]),
@@ -248,17 +258,19 @@ def validate(
     for v in sens_ranges.values():
         grid_size *= len(v)
 
-    console.print(f"[bold]Validating[/bold] strategy=[cyan]{name}[/cyan] "
+    risk_label = f" + risk[{', '.join(o['type'] for o in risk_specs)}]" if risk_specs else ""
+    console.print(f"[bold]Validating[/bold] strategy=[cyan]{name}[/cyan]{risk_label} "
                   f"symbols={list(prices.columns)} period={s}→{e}")
 
     console.print(f"[dim]Step 1/3:[/dim] OOS split (train_pct={train_pct})")
-    oos = run_oos_split(prices, strategy, cm, capital, train_pct=train_pct)
+    oos = run_oos_split(prices, strategy, cm, capital, train_pct=train_pct, overlays=overlays)
 
     console.print(f"[dim]Step 2/3:[/dim] Walk-forward ({n_folds} folds)")
-    wf = run_walk_forward(prices, strategy, cm, capital, n_folds=n_folds)
+    wf = run_walk_forward(prices, strategy, cm, capital, n_folds=n_folds, overlays=overlays)
 
     console.print(f"[dim]Step 3/3:[/dim] Sensitivity grid ({grid_size} combos)")
-    sens = run_sensitivity(prices, name, base_params, sens_ranges, cm, capital, aux=aux)
+    sens = run_sensitivity(prices, name, base_params, sens_ranges, cm, capital,
+                           aux=aux, overlays=overlays)
 
     verdict = assess(oos, wf, sens)
 

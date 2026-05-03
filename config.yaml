@@ -27,5 +27,31 @@ strategies:
     z_window: 30
     smoothing_periods: 3
 
+# Per-strategy risk overlay chains. Order matters:
+#   trend_filter masks first (zero out longs in downtrends),
+#   vol_target then sizes raw weights to a target annualized vol,
+#   stop_loss overrides per-position drawdowns last.
+risk:
+  momentum:
+    - type: trend_filter
+      ma_window: 200
+      side: long
+    - type: vol_target
+      target_vol: 0.30
+      vol_window: 30
+      max_leverage: 1.0
+    - type: stop_loss
+      max_loss_pct: 0.15
+
+  funding_mr:
+    # No trend filter: funding_mr is mean-reversion; trend filter would
+    # cancel the very rejimes where the strategy is supposed to fire.
+    - type: vol_target
+      target_vol: 0.20
+      vol_window: 14
+      max_leverage: 1.0
+    - type: stop_loss
+      max_loss_pct: 0.15
+
 reports:
   output_dir: reports

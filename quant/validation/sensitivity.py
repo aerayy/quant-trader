@@ -7,6 +7,7 @@ import pandas as pd
 from tqdm import tqdm
 
 from quant.backtest import CostModel, run_backtest
+from quant.risk import RiskOverlay
 from quant.strategies import get_strategy
 
 
@@ -18,6 +19,7 @@ def run_sensitivity(
     cost: CostModel,
     initial_capital: float = 10_000.0,
     aux: dict[str, Any] | None = None,
+    overlays: list[RiskOverlay] | None = None,
 ) -> pd.DataFrame:
     """Grid search over parameter ranges, returning a DataFrame with one
     row per combination including all backtest metrics.
@@ -41,7 +43,7 @@ def run_sensitivity(
         for k, v in zip(keys, combo):
             params[k] = v
         strategy = get_strategy(strategy_name, params, **aux)
-        result = run_backtest(prices, strategy, cost, initial_capital)
+        result = run_backtest(prices, strategy, cost, initial_capital, overlays=overlays)
         row = {k: v for k, v in zip(keys, combo)}
         row.update(result.metrics)
         rows.append(row)

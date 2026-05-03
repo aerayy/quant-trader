@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 
 from quant.backtest import CostModel, compute_metrics, run_backtest
+from quant.risk import RiskOverlay
 from quant.strategies import Strategy
 
 from .oos import _count_trades_df
@@ -24,12 +25,13 @@ def run_walk_forward(
     cost: CostModel,
     initial_capital: float = 10_000.0,
     n_folds: int = 5,
+    overlays: list[RiskOverlay] | None = None,
 ) -> WalkForwardResult:
     """Run a single full backtest, then slice into N contiguous folds and
     compute fold-level metrics. This is k-fold-style time series validation,
     not true walk-forward optimization (the strategy has no per-fold tuning).
     """
-    full = run_backtest(prices, strategy, cost, initial_capital)
+    full = run_backtest(prices, strategy, cost, initial_capital, overlays=overlays)
     n = len(full.returns)
     if n < n_folds * 30:  # need at least 30 obs per fold
         n_folds = max(2, n // 30)

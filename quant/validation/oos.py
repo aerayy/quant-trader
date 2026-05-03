@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import pandas as pd
 
 from quant.backtest import CostModel, compute_metrics, run_backtest
+from quant.risk import RiskOverlay
 from quant.strategies import Strategy
 
 
@@ -32,13 +33,14 @@ def run_oos_split(
     cost: CostModel,
     initial_capital: float = 10_000.0,
     train_pct: float = 0.7,
+    overlays: list[RiskOverlay] | None = None,
 ) -> OOSResult:
     """Run backtest on full price series, then split returns into IS/OOS at train_pct.
 
     This avoids cold-start bias from running backtests separately on each slice
     (signal lookback continues across the boundary).
     """
-    full = run_backtest(prices, strategy, cost, initial_capital)
+    full = run_backtest(prices, strategy, cost, initial_capital, overlays=overlays)
 
     n = len(full.returns)
     split = max(1, int(n * train_pct))

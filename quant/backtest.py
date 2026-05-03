@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from quant.risk import RiskOverlay, apply_overlays
 from quant.strategies import Strategy
 
 
@@ -50,8 +51,12 @@ def run_backtest(
     strategy: Strategy,
     cost: CostModel,
     initial_capital: float = 10_000.0,
+    overlays: list[RiskOverlay] | None = None,
 ) -> BacktestResult:
     raw_weights = strategy.generate_weights(prices).reindex(prices.index).fillna(0.0)
+
+    if overlays:
+        raw_weights = apply_overlays(raw_weights, prices, overlays).reindex(prices.index).fillna(0.0)
 
     asset_returns = prices.pct_change().fillna(0.0)
 
