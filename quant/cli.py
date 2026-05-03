@@ -202,6 +202,10 @@ DEFAULT_SENSITIVITY_RANGES = {
         "z_long_threshold": [-2.5, -2.0, -1.5, -1.0, -0.5],
         "z_window": [14, 21, 30, 60],
     },
+    "eth_btc_ratio_mr": {
+        "z_window": [30, 45, 60, 90, 120],
+        "entry_threshold": [1.0, 1.5, 2.0, 2.5, 3.0],
+    },
 }
 
 

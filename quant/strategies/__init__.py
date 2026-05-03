@@ -3,12 +3,14 @@ from __future__ import annotations
 from typing import Any
 
 from .base import Strategy, StrategyConfig
+from .eth_btc_ratio_mr import EthBtcRatioMeanReversionStrategy
 from .funding_mr import FundingMeanReversionStrategy
 from .momentum import MomentumStrategy
 
 REGISTRY: dict[str, type[Strategy]] = {
     "momentum": MomentumStrategy,
     "funding_mr": FundingMeanReversionStrategy,
+    "eth_btc_ratio_mr": EthBtcRatioMeanReversionStrategy,
 }
 
 # Strategies that need auxiliary data beyond price klines must declare
@@ -29,5 +31,6 @@ def get_strategy(name: str, params: dict[str, Any], **kwargs: Any) -> Strategy:
 __all__ = [
     "Strategy", "StrategyConfig",
     "MomentumStrategy", "FundingMeanReversionStrategy",
+    "EthBtcRatioMeanReversionStrategy",
     "get_strategy", "REGISTRY", "AUX_DATA_KEYS",
 ]

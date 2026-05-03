@@ -27,6 +27,13 @@ strategies:
     z_window: 30
     smoothing_periods: 3
 
+  eth_btc_ratio_mr:
+    z_window: 60
+    entry_threshold: 2.0
+    exit_threshold: 0.5
+    long_symbol: ETHUSDT
+    short_symbol: BTCUSDT
+
 # Per-strategy risk overlay chains. Order matters:
 #   trend_filter masks first (zero out longs in downtrends),
 #   vol_target then sizes raw weights to a target annualized vol,
@@ -52,6 +59,17 @@ risk:
       max_leverage: 1.0
     - type: stop_loss
       max_loss_pct: 0.15
+
+  eth_btc_ratio_mr:
+    # Pair trade: no trend filter (relative-value bet, not directional).
+    # Tighter stop loss because mean-reverting trades expected to revert
+    # quickly — large adverse moves often signal regime change.
+    - type: vol_target
+      target_vol: 0.15
+      vol_window: 30
+      max_leverage: 1.0
+    - type: stop_loss
+      max_loss_pct: 0.10
 
 reports:
   output_dir: reports
