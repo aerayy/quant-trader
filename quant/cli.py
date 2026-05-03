@@ -484,18 +484,28 @@ def paper_trade(
     config: Path = typer.Option(Path("config.yaml"), "--config", "-c"),
     once: bool = typer.Option(False, "--once",
                               help="Run a single iteration and exit"),
+    live: bool = typer.Option(False, "--live",
+                              help="WebSocket-driven mode with dashboard + Telegram"),
     interval_seconds: int = typer.Option(86400, "--interval-seconds",
-                                         help="Daemon mode: seconds between iterations"),
+                                         help="Cron-style daemon: seconds between iterations"),
+    refresh_per_second: float = typer.Option(1.0, "--refresh",
+                                             help="Live dashboard refresh rate (Hz)"),
 ):
     """Run paper trader: signal engine + simulated execution + SQLite state.
 
-    By default runs as a daemon, computing one signal per interval (24h
-    matches our 1d strategy bar). Use --once for a single iteration (great
-    for cron, or for testing). State persists in <cache_dir>/../paper.db.
+    Modes:
+      --once    Single iteration on cached data, exit (cron-friendly)
+      --live    WebSocket-driven; bootstraps recent data, dashboard,
+                Telegram alerts (if configured), bar-close auto-trigger
+      (default) Cron-style daemon — sleeps between iterations
     """
-    from quant.live.runner import run_daemon, run_once
+    from quant.live.runner import run_daemon, run_live, run_once
 
     cfg = load_config(config)
+
+    if live:
+        run_live(cfg, console=console, refresh_per_second=refresh_per_second)
+        return
 
     if once:
         result = run_once(cfg, console=console)

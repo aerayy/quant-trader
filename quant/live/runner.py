@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -64,12 +65,14 @@ def _compute_equity(state: PaperState,
 def run_once(cfg: dict, console=None) -> dict:
     """Single iteration: build prices → compute signal → reconcile → record.
 
-    Returns a summary dict that the CLI prints.
+    Returns a summary dict that the CLI prints. For paper trading, we ignore
+    cfg.data.end_date and use all-cached data so each run sees the latest bars
+    that bootstrap brought in.
     """
     syms = cfg["data"]["symbols"]
     iv = cfg["data"]["interval"]
     s = str(cfg["data"]["start_date"])
-    e = str(cfg["data"]["end_date"])
+    e = "2099-12-31"  # use all data through cache end; paper trader is not period-bound
 
     store = DataStore(cfg["data"]["cache_dir"])
     prices = _build_prices(store, syms, iv, s, e)
@@ -126,6 +129,121 @@ def run_once(cfg: dict, console=None) -> dict:
         "positions_value": pos_val_after,
         "equity": equity_after,
     }
+
+
+def run_live(cfg: dict, console=None, refresh_per_second: float = 1.0,
+             poll_interval_seconds: int = 15) -> None:
+    """WebSocket-driven paper trader with terminal dashboard + Telegram alerts.
+
+    Lifecycle:
+      1. REST-bootstrap recent klines into local cache.
+      2. Initialize PaperState (sets initial cash on first run).
+      3. Run signal once on bootstrapped data; alert any trades fired.
+      4. Start Binance WebSocket (bar close + miniTicker).
+      5. Start background poll thread that watches for new bar closes;
+         when all symbols have a fresh bar, runs signal again.
+      6. Run rich.live dashboard in main thread until Ctrl+C.
+      7. On shutdown: stop WS, send "stopped" notification.
+
+    No Binance API auth needed (public market data only). Telegram is
+    optional — set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID in .env to enable.
+    """
+    from .bootstrap import bootstrap_klines
+    from .dashboard import Dashboard
+    from .notifier import Notifier
+    from .ws_client import BinanceWSClient
+
+    name = cfg["strategy"]
+    notifier = Notifier(console=console)
+    db_path = _paper_db_path(cfg)
+
+    if console:
+        console.print("[bold]Step 1/4:[/bold] REST-bootstrap recent klines")
+    bootstrap_klines(cfg, console=console)
+
+    if console:
+        console.print("[bold]Step 2/4:[/bold] initialize state + first signal")
+
+    state = PaperState(db_path)
+    initial = float(cfg["backtest"]["initial_capital"])
+    if state.get_cash() == 0.0 and not state.get_positions():
+        state.set_cash(initial)
+        if console:
+            console.print(f"[dim]First run: initialized state with "
+                          f"{initial:.2f} USDT cash[/dim]")
+    state.close()
+
+    initial_result = run_once(cfg, console=console)
+    if initial_result["executed"]:
+        for t in initial_result["executed"]:
+            notifier.trade(t["side"], t["symbol"], t["qty"], t["price"], t["notional"])
+    notifier.signal(initial_result["target_weights"], strategy=name)
+
+    last_processed_date = pd.Timestamp(initial_result["data_last_bar"]).date()
+
+    if console:
+        console.print("[bold]Step 3/4:[/bold] start Binance WebSocket")
+    ws_client = BinanceWSClient(cfg["data"]["symbols"], cfg["data"]["interval"])
+    ws_client.start()
+
+    notifier.send(
+        f"✅ Paper trader live\n"
+        f"Strategy: `{name}`\n"
+        f"Symbols: `{', '.join(cfg['data']['symbols'])}`\n"
+        f"Equity: `{initial_result['equity']:,.2f}` USDT"
+    )
+
+    stop_flag = threading.Event()
+
+    def poll_loop() -> None:
+        nonlocal last_processed_date
+        while not stop_flag.is_set():
+            try:
+                bars = ws_client.get_closed_bars()
+                expected = len(ws_client.symbols)
+                if len(bars) >= expected:
+                    dates = [
+                        pd.Timestamp(b["close_time"], unit="ms").date()
+                        for b in bars.values()
+                    ]
+                    common = dates[0]
+                    if all(d == common for d in dates) and common > last_processed_date:
+                        try:
+                            result = run_once(cfg, console=console)
+                            for t in result["executed"]:
+                                notifier.trade(
+                                    t["side"], t["symbol"], t["qty"],
+                                    t["price"], t["notional"],
+                                )
+                            notifier.signal(result["target_weights"], strategy=name)
+                            last_processed_date = common
+                        except Exception as exc:
+                            notifier.error(f"Signal computation failed: {exc!r}")
+            except Exception as exc:
+                if console:
+                    console.print(f"[yellow]poll loop error:[/yellow] {exc!r}")
+            stop_flag.wait(poll_interval_seconds)
+
+    poll_thread = threading.Thread(target=poll_loop, name="poll-loop", daemon=True)
+    poll_thread.start()
+
+    if console:
+        console.print("[bold]Step 4/4:[/bold] dashboard (Ctrl+C to stop)")
+
+    dashboard_state = PaperState(db_path)
+    dashboard = Dashboard(
+        dashboard_state, ws_client, strategy_name=name,
+        refresh_per_second=refresh_per_second,
+    )
+    try:
+        dashboard.run(console=console)
+    finally:
+        stop_flag.set()
+        ws_client.stop()
+        dashboard_state.close()
+        notifier.send("👋 Paper trader stopped")
+        if console:
+            console.print("[yellow]Stopped[/yellow]")
 
 
 def run_daemon(cfg: dict, console=None,

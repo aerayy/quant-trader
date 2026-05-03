@@ -59,13 +59,14 @@ class DataStore:
         if not parts:
             raise FileNotFoundError(f"No parquet files in {sym_dir}")
         df = pd.concat([pd.read_parquet(p) for p in parts], ignore_index=True)
-        df = df.sort_values("open_time").drop_duplicates("open_time").reset_index(drop=True)
         # Binance vision uses ms for ≤2024 archives but switched to µs for 2025+.
-        # Normalize so values > 1e15 (16+ digits) are downcast µs → ms.
+        # Normalize FIRST so de-duplication works against post-bootstrap merges
+        # that mixed both formats in the same file.
         ot = df["open_time"]
         mask_us = ot > 1_000_000_000_000_000
         if mask_us.any():
             df.loc[mask_us, "open_time"] = ot[mask_us] // 1000
+        df = df.sort_values("open_time").drop_duplicates("open_time", keep="last").reset_index(drop=True)
         df["open_time"] = pd.to_datetime(df["open_time"], unit="ms")
         df = df.set_index("open_time")
         return df.loc[start:end]
