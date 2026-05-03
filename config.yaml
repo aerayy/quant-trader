@@ -12,11 +12,20 @@ backtest:
   fee_pct: 0.001            # %0.1 — Binance spot taker
   slippage_pct: 0.0005      # 5 bps — konservatif slippage tahmini
 
-strategy:
-  name: momentum
-  params:
+# Default strategy name; override per-run with `--strategy <name>`
+strategy: momentum
+
+# Per-strategy parameter blocks
+strategies:
+  momentum:
     lookback_days: 60
     rebalance_days: 5
+
+  funding_mr:
+    z_long_threshold: -1.5
+    z_flat_threshold: 0.0
+    z_window: 30
+    smoothing_periods: 3
 
 reports:
   output_dir: reports

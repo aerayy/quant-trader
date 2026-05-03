@@ -8,8 +8,8 @@ from rich.console import Console
 
 from quant.backtest import CostModel, run_backtest
 from quant.config import load_config
-from quant.data import DataStore, download as data_download
-from quant.strategies import get_strategy
+from quant.data import DataStore, download as data_download, download_funding
+from quant.strategies import AUX_DATA_KEYS, get_strategy
 from quant.validation import (
     assess,
     run_oos_split,
@@ -34,21 +34,64 @@ def download(
                                  help="e.g., 1d, 4h, 1h, 1m. Overrides config."),
     start: str = typer.Option(None, "--start", help="YYYY-MM-DD; overrides config"),
     end: str = typer.Option(None, "--end", help="YYYY-MM-DD; overrides config"),
+    data_type: str = typer.Option("all", "--type", "-t",
+                                  help="klines | funding | all"),
 ):
-    """Download Binance historical klines into local Parquet cache."""
+    """Download Binance historical data into local Parquet cache.
+
+    Spot klines from /spot/monthly/klines, funding rates from
+    /futures/um/monthly/fundingRate.
+    """
     cfg = load_config(config)
     syms = symbols.split(",") if symbols else cfg["data"]["symbols"]
     iv = interval or cfg["data"]["interval"]
     s = start or str(cfg["data"]["start_date"])
     e = end or str(cfg["data"]["end_date"])
 
-    store = DataStore(cfg["data"]["cache_dir"])
-    console.print(f"[bold]Downloading[/bold] {syms} interval={iv} {s} → {e}")
-    summary = data_download(syms, iv, s, e, store)
+    if data_type not in ("all", "klines", "funding"):
+        console.print(f"[red]✗[/red] Invalid --type {data_type!r}; use klines|funding|all")
+        raise typer.Exit(code=1)
 
-    total = sum(summary.values())
+    store = DataStore(cfg["data"]["cache_dir"])
+    total = 0
+
+    if data_type in ("all", "klines"):
+        console.print(f"[bold]Klines[/bold] {syms} interval={iv} {s} → {e}")
+        kline_summary = data_download(syms, iv, s, e, store)
+        total += sum(kline_summary.values())
+
+    if data_type in ("all", "funding"):
+        console.print(f"[bold]Funding[/bold] {syms} {s} → {e}")
+        funding_summary = download_funding(syms, s, e, store)
+        total += sum(funding_summary.values())
+
     console.print(f"[green]✓[/green] Downloaded {total} new month-files. "
                   f"Cache: [cyan]{store.cache_dir}[/cyan]")
+
+
+def _load_aux_data(strategy_name: str, symbols: list[str],
+                   store: DataStore, start: str, end: str) -> dict:
+    """Load auxiliary data (e.g., funding rates) for strategies that need it.
+    Strategies declare their needed kwargs in strategies.AUX_DATA_KEYS.
+    """
+    aux: dict = {}
+    keys = AUX_DATA_KEYS.get(strategy_name, ())
+
+    if "funding_data" in keys:
+        funding = {}
+        missing = []
+        for sym in symbols:
+            f = store.load_funding(sym, start, end)
+            if f.empty:
+                missing.append(sym)
+            else:
+                funding[sym] = f
+        if missing:
+            console.print(f"[yellow]⚠[/yellow] Funding missing for {missing}; "
+                          f"run `python -m quant download --type funding`")
+        aux["funding_data"] = funding
+
+    return aux
 
 
 @app.command()
@@ -81,9 +124,10 @@ def backtest(
     prices = pd.DataFrame(closes).sort_index()
     prices = prices.ffill().dropna(how="all")
 
-    name = strategy_name or cfg["strategy"]["name"]
-    params = cfg["strategy"]["params"]
-    strategy = get_strategy(name, params)
+    name = strategy_name or cfg["strategy"]
+    params = cfg["strategies"][name]
+    aux = _load_aux_data(name, list(prices.columns), store, s, e)
+    strategy = get_strategy(name, params, **aux)
 
     cm = CostModel(
         fee_pct=float(cfg["backtest"]["fee_pct"]),
@@ -148,6 +192,10 @@ DEFAULT_SENSITIVITY_RANGES = {
         "lookback_days": [30, 45, 60, 75, 90, 120],
         "rebalance_days": [1, 3, 5, 10, 20],
     },
+    "funding_mr": {
+        "z_long_threshold": [-2.5, -2.0, -1.5, -1.0, -0.5],
+        "z_window": [14, 21, 30, 60],
+    },
 }
 
 
@@ -181,9 +229,10 @@ def validate(
 
     prices = pd.DataFrame(closes).sort_index().ffill().dropna(how="all")
 
-    name = strategy_name or cfg["strategy"]["name"]
-    base_params = cfg["strategy"]["params"]
-    strategy = get_strategy(name, base_params)
+    name = strategy_name or cfg["strategy"]
+    base_params = cfg["strategies"][name]
+    aux = _load_aux_data(name, list(prices.columns), store, s, e)
+    strategy = get_strategy(name, base_params, **aux)
     cm = CostModel(
         fee_pct=float(cfg["backtest"]["fee_pct"]),
         slippage_pct=float(cfg["backtest"]["slippage_pct"]),
@@ -209,7 +258,7 @@ def validate(
     wf = run_walk_forward(prices, strategy, cm, capital, n_folds=n_folds)
 
     console.print(f"[dim]Step 3/3:[/dim] Sensitivity grid ({grid_size} combos)")
-    sens = run_sensitivity(prices, name, base_params, sens_ranges, cm, capital)
+    sens = run_sensitivity(prices, name, base_params, sens_ranges, cm, capital, aux=aux)
 
     verdict = assess(oos, wf, sens)
 
