@@ -73,3 +73,12 @@ risk:
 
 reports:
   output_dir: reports
+
+# Live trading risk gates (used by `live-trade` command).
+# All values are FRACTIONS of equity, not percentage strings.
+live:
+  risk:
+    daily_loss_pct: 0.05      # halt if today's drop ≥ 5%
+    max_drawdown_pct: 0.15    # halt + auto-arm kill if drop from ATH ≥ 15%
+    max_position_pct: 1.0     # max single trade size as fraction of equity
+                              # (1.0 = no per-trade cap; spot can't leverage)

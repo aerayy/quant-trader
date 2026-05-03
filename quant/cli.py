@@ -596,6 +596,109 @@ def paper_status(
     state.close()
 
 
+@app.command("live-trade")
+def live_trade(
+    config: Path = typer.Option(Path("config.yaml"), "--config", "-c"),
+    testnet: bool = typer.Option(False, "--testnet",
+                                 help="Use Binance testnet (no real money). Strongly recommended for first run."),
+    confirm_real_money: bool = typer.Option(False, "--confirm-real-money",
+                                            help="Required to enter MAINNET (real money). Acknowledges full risk."),
+    refresh_per_second: float = typer.Option(1.0, "--refresh",
+                                             help="Dashboard refresh rate (Hz)"),
+    poll_interval_seconds: int = typer.Option(15, "--poll-interval",
+                                              help="Background poll interval for new bar closes"),
+):
+    """🚨 LIVE trading with REAL Binance orders. Places actual buy/sell.
+
+    Always test with --testnet first.
+
+    Pre-flight enforces:
+      • API key has SPOT trading enabled
+      • API key has WITHDRAWAL DISABLED (system refuses to start otherwise)
+      • Configured symbols are tradable
+      • IP whitelist warning if not set
+
+    Hard safety:
+      • Risk manager: daily loss limit, max-DD halt, kill switch
+      • Idempotent client_order_ids prevent double-fires on retries
+      • Exchange is source-of-truth for cash and positions
+      • Kill switch: `touch ~/.quant_kill` from any shell halts at next tick
+      • Telegram /pause /kill /status if TELEGRAM_BOT_TOKEN configured
+    """
+    from quant.live.runner import run_live_real
+
+    cfg = load_config(config)
+
+    if not testnet:
+        if not confirm_real_money:
+            console.print(
+                "[red bold]✗[/red bold] Mainnet (real money) requires "
+                "[cyan]--confirm-real-money[/cyan] flag.\n"
+                "Strongly suggested: run with [cyan]--testnet[/cyan] first."
+            )
+            raise typer.Exit(code=1)
+
+        risk_cfg = (cfg.get("live") or {}).get("risk") or {}
+        console.print()
+        console.print("[red bold]🚨 REAL MONEY MODE — Binance MAINNET 🚨[/red bold]")
+        console.print(f"  Strategy:        [cyan]{cfg['strategy']}[/cyan]")
+        console.print(f"  Symbols:         {cfg['data']['symbols']}")
+        console.print(f"  Daily loss cap:  -{float(risk_cfg.get('daily_loss_pct', 0.05)):.0%}")
+        console.print(f"  Max DD halt:     -{float(risk_cfg.get('max_drawdown_pct', 0.15)):.0%}")
+        console.print()
+        if not typer.confirm(
+            "This will place REAL orders that move REAL money. Continue?"
+        ):
+            console.print("Aborted.")
+            return
+
+    try:
+        run_live_real(
+            cfg, console=console, testnet=testnet,
+            refresh_per_second=refresh_per_second,
+            poll_interval_seconds=poll_interval_seconds,
+        )
+    except RuntimeError as e:
+        console.print()
+        console.print(f"[red bold]✗ Live trader failed to start[/red bold]")
+        console.print(f"  {e}")
+        console.print()
+        if "API_KEY" in str(e):
+            console.print("[dim]Setup: see [cyan].env.example[/cyan] for the "
+                          "10-step Binance API key checklist.[/dim]")
+        raise typer.Exit(code=1)
+
+
+@app.command("kill")
+def kill_command(
+    confirm: bool = typer.Option(False, "--yes", help="Skip confirmation"),
+):
+    """Arm the kill switch (touches ~/.quant_kill). Live trader will halt at
+    next signal tick. Positions remain open until you flatten manually.
+
+    Use `python -m quant unkill` to clear.
+    """
+    from quant.live.risk_manager import DEFAULT_KILL_FILE
+    if not confirm:
+        if not typer.confirm(f"Touch {DEFAULT_KILL_FILE} to halt live trader?"):
+            console.print("Aborted.")
+            return
+    DEFAULT_KILL_FILE.touch(exist_ok=True)
+    DEFAULT_KILL_FILE.write_text("CLI kill")
+    console.print(f"[red]🔴[/red] Kill armed: {DEFAULT_KILL_FILE}")
+
+
+@app.command("unkill")
+def unkill_command():
+    """Clear the kill switch."""
+    from quant.live.risk_manager import DEFAULT_KILL_FILE
+    if DEFAULT_KILL_FILE.exists():
+        DEFAULT_KILL_FILE.unlink()
+        console.print(f"[green]✓[/green] Kill cleared: {DEFAULT_KILL_FILE}")
+    else:
+        console.print(f"[dim]No kill file at {DEFAULT_KILL_FILE}[/dim]")
+
+
 @app.command("paper-reset")
 def paper_reset(
     config: Path = typer.Option(Path("config.yaml"), "--config", "-c"),

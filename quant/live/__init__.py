@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from .paper_executor import PaperExecutor
-from .runner import run_daemon, run_live, run_once
+from .runner import run_daemon, run_live, run_live_real, run_once
 from .signal_engine import SignalEngine
 from .state import PaperState
 
@@ -12,4 +12,5 @@ __all__ = [
     "run_once",
     "run_daemon",
     "run_live",
+    "run_live_real",
 ]
