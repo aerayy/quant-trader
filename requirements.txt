@@ -8,3 +8,4 @@ pyyaml>=6.0
 matplotlib>=3.7
 tqdm>=4.66
 python-dotenv>=1.0
+python-binance>=1.0

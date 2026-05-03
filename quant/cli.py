@@ -479,6 +479,141 @@ def _save_walk_forward_plot(wf, path, name) -> bool:
     return True
 
 
+@app.command("paper-trade")
+def paper_trade(
+    config: Path = typer.Option(Path("config.yaml"), "--config", "-c"),
+    once: bool = typer.Option(False, "--once",
+                              help="Run a single iteration and exit"),
+    interval_seconds: int = typer.Option(86400, "--interval-seconds",
+                                         help="Daemon mode: seconds between iterations"),
+):
+    """Run paper trader: signal engine + simulated execution + SQLite state.
+
+    By default runs as a daemon, computing one signal per interval (24h
+    matches our 1d strategy bar). Use --once for a single iteration (great
+    for cron, or for testing). State persists in <cache_dir>/../paper.db.
+    """
+    from quant.live.runner import run_daemon, run_once
+
+    cfg = load_config(config)
+
+    if once:
+        result = run_once(cfg, console=console)
+        console.print()
+        console.print(f"[bold]Last data bar:[/bold] {result['data_last_bar'][:10]}")
+        if result["is_first_run"]:
+            console.print(f"[dim](first run; state initialized)[/dim]")
+
+        console.print()
+        console.print("[bold cyan]Target weights[/bold cyan]")
+        for sym, w in result["target_weights"].items():
+            console.print(f"  {sym}: {w:+.4f}  @  {result['current_prices'][sym]:,.2f}")
+
+        console.print()
+        if result["executed"]:
+            console.print(f"[bold cyan]Executed trades ({len(result['executed'])})[/bold cyan]")
+            for t in result["executed"]:
+                console.print(f"  {t['side']:4s}  {t['symbol']}  qty={t['qty']:.6f}  "
+                              f"@ {t['price']:,.2f}  notional={t['notional']:,.2f}  "
+                              f"fee={t['fee']:.2f}")
+        else:
+            console.print("[dim]No trades (target matches current within min_notional)[/dim]")
+
+        console.print()
+        console.print(f"[bold]Cash:[/bold]            {result['cash']:>12,.2f} USDT")
+        console.print(f"[bold]Positions value:[/bold] {result['positions_value']:>12,.2f} USDT")
+        console.print(f"[bold]Total equity:[/bold]    {result['equity']:>12,.2f} USDT")
+    else:
+        console.print(f"[bold]Paper trader daemon[/bold] — interval {interval_seconds}s. "
+                      "Ctrl+C to stop.")
+        run_daemon(cfg, console=console, signal_interval_seconds=interval_seconds)
+
+
+@app.command("paper-status")
+def paper_status(
+    config: Path = typer.Option(Path("config.yaml"), "--config", "-c"),
+):
+    """Show current paper portfolio state from SQLite."""
+    from quant.live.state import PaperState
+
+    cfg = load_config(config)
+    db_path = Path(cfg["data"]["cache_dir"]).parent / "paper.db"
+    if not db_path.exists():
+        console.print("[yellow]No paper state yet. "
+                      "Run `python -m quant paper-trade --once` to initialize.[/yellow]")
+        raise typer.Exit(code=0)
+
+    state = PaperState(db_path)
+
+    cash = state.get_cash()
+    positions = state.get_positions()
+
+    console.print(f"[bold]DB:[/bold] [cyan]{db_path}[/cyan]")
+    console.print()
+    console.print(f"[bold]Cash:[/bold] {cash:,.2f} USDT")
+
+    if positions:
+        console.print(f"[bold]Positions:[/bold]")
+        for sym, qty in positions.items():
+            detail = state.get_position_detail(sym)
+            avg = detail[1] if detail else 0.0
+            console.print(f"  {sym}  qty={qty:.6f}  avg_entry={avg:,.2f}")
+    else:
+        console.print("[bold]Positions:[/bold] (none)")
+
+    eq = state.get_equity_history(limit=8)
+    if not eq.empty:
+        console.print()
+        console.print("[bold]Recent equity (latest first):[/bold]")
+        for _, r in eq.iterrows():
+            console.print(f"  {r['timestamp'][:19]}  "
+                          f"equity={r['total_equity']:>10,.2f}  "
+                          f"cash={r['cash']:>10,.2f}  "
+                          f"positions={r['positions_value']:>10,.2f}")
+
+    trades = state.get_recent_trades(limit=10)
+    if not trades.empty:
+        console.print()
+        console.print("[bold]Recent trades (latest first):[/bold]")
+        for _, r in trades.iterrows():
+            console.print(f"  {r['timestamp'][:19]}  {r['side']:4s}  {r['symbol']}  "
+                          f"qty={r['qty']:.6f}  @ {r['price']:,.2f}  "
+                          f"notional={r['notional']:,.2f}")
+    else:
+        console.print()
+        console.print("[bold]Recent trades:[/bold] (none yet)")
+
+    state.close()
+
+
+@app.command("paper-reset")
+def paper_reset(
+    config: Path = typer.Option(Path("config.yaml"), "--config", "-c"),
+    yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompt"),
+):
+    """Wipe paper trader state (positions, trades, equity, signals)."""
+    from quant.live.state import PaperState
+
+    cfg = load_config(config)
+    db_path = Path(cfg["data"]["cache_dir"]).parent / "paper.db"
+    if not db_path.exists():
+        console.print("[yellow]No paper state to reset[/yellow]")
+        return
+
+    if not yes:
+        confirmed = typer.confirm(
+            "This will delete all paper positions, trades, and equity history. Continue?"
+        )
+        if not confirmed:
+            console.print("Aborted.")
+            return
+
+    state = PaperState(db_path)
+    state.reset()
+    state.close()
+    console.print(f"[green]✓[/green] Cleared state in {db_path}")
+
+
 def main() -> None:
     app()
 

@@ -15,6 +15,8 @@ reports/
 
 # Databases (paper / live state — local only)
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
 
