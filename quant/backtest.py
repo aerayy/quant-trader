@@ -72,7 +72,7 @@ def run_backtest(
     equity = (1.0 + net).cumprod() * initial_capital
 
     trades = _extract_trades(portfolio_weights, prices)
-    metrics = _compute_metrics(net, equity, portfolio_weights, trades)
+    metrics = compute_metrics(net, equity, portfolio_weights, trades)
 
     return BacktestResult(
         equity_curve=equity,
@@ -97,7 +97,7 @@ def _extract_trades(weights: pd.DataFrame, prices: pd.DataFrame) -> pd.DataFrame
     return pd.DataFrame(rows).sort_values("time").reset_index(drop=True)
 
 
-def _compute_metrics(
+def compute_metrics(
     returns: pd.Series,
     equity: pd.Series,
     weights: pd.DataFrame,
