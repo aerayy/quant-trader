@@ -1,0 +1,22 @@
+data:
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+  interval: 1d              # 1d, 4h, 1h, 15m, 5m, 1m
+  start_date: 2022-01-01
+  end_date: 2025-04-30
+  cache_dir: data_cache
+
+backtest:
+  initial_capital: 10000    # USDT
+  fee_pct: 0.001            # %0.1 — Binance spot taker
+  slippage_pct: 0.0005      # 5 bps — konservatif slippage tahmini
+
+strategy:
+  name: momentum
+  params:
+    lookback_days: 60
+    rebalance_days: 5
+
+reports:
+  output_dir: reports
